@@ -1,163 +1,179 @@
-import React, {useState, useEffect, useRef} from 'react';
+import React, {useCallback, useEffect, useRef, useState} from 'react';
 import * as d3 from 'd3';
 import * as topojson from 'topojson';
+import {MAP_TYPES} from '../constants';
+import legend from './legend';
 
-function ChoroplethMap(props) {
-  const [rendered, setRendered] = useState(false);
-  const [states, setStates] = useState(props.states);
-  const [state, setState] = useState({});
-  const [statistic, setStatistic] = useState({});
-  const [index, setIndex] = useState(1);
+const propertyFieldMap = {
+  country: 'st_nm',
+  state: 'district',
+};
+
+function ChoroplethMap({
+  statistic,
+  mapData,
+  setHoveredRegion,
+  mapMeta,
+  changeMap,
+  selectedRegion,
+  setSelectedRegion,
+  isCountryLoaded,
+}) {
   const choroplethMap = useRef(null);
+  const choroplethLegend = useRef(null);
+  const [svgRenderCount, setSvgRenderCount] = useState(0);
 
-  useEffect(()=>{
-    if (props.states.length>1 && choroplethMap.current) {
-      mapData(choroplethMap.current);
-      setState(states[1]);
-    }
-  }, [statistic]);
+  const ready = useCallback(
+    (geoData) => {
+      d3.selectAll('svg#chart > *').remove();
 
-  useEffect(()=>{
-    if (states.length > 1) {
-      let total = 0;
-      let maxConfirmed = parseInt(states[1].confirmed);
-      let minConfirmed = parseInt(states[1].confirmed);
-      for (let i=1; i<states.length; i++) {
-        total+=parseInt(states[i].confirmed);
-        if (parseInt(states[i].confirmed) > parseInt(maxConfirmed)) maxConfirmed = parseInt(states[i].confirmed);
-        if (parseInt(states[i].confirmed) < parseInt(minConfirmed)) minConfirmed = parseInt(states[i].confirmed);
+      const propertyField = propertyFieldMap[mapMeta.mapType];
+      const svg = d3.select(choroplethMap.current);
+
+      const topology = topojson.feature(
+        geoData,
+        geoData.objects[mapMeta.graphObjectName]
+      );
+
+      const projection = d3.geoMercator();
+      // Set size of map
+      let path;
+      let width;
+      let height;
+      if (!svg.attr('viewBox')) {
+        const widthStyle = parseInt(svg.style('width'));
+        if (isCountryLoaded) projection.fitWidth(widthStyle, topology);
+        else {
+          const heightStyle = parseInt(svg.style('height'));
+          projection.fitSize([widthStyle, heightStyle], topology);
+        }
+        path = d3.geoPath(projection);
+        const bBox = path.bounds(topology);
+        width = +bBox[1][0];
+        height = +bBox[1][1];
+        svg.attr('viewBox', `0 0 ${width} ${height}`);
       }
-      setStatistic({
-        total: total,
-        maxConfirmed: maxConfirmed,
-        minConfirmed: minConfirmed,
-      });
-    }
-  }, [states.length]);
+      const bBox = svg.attr('viewBox').split(' ');
+      width = +bBox[2];
+      height = +bBox[3];
+      projection.fitSize([width, height], topology);
+      path = d3.geoPath(projection);
 
-  useEffect(()=>{
-    setStates(props.states);
-  }, [props.states]);
+      /* LEGEND */
+      const svgLegend = d3.select(choroplethLegend.current);
+      svgLegend.selectAll('*').remove();
+      const redInterpolator = (t) => d3.interpolateReds(t * 0.85);
+      const colorScale = d3.scaleSequential(
+        [0, statistic.maxConfirmed],
+        redInterpolator
+      );
+      // Colorbar
+      const widthLegend = parseInt(svgLegend.style('width'));
+      const margin = {left: 0.02 * widthLegend, right: 0.02 * widthLegend};
+      const barWidth = widthLegend - margin.left - margin.right;
+      const heightLegend = +svgLegend.attr('height');
+      svgLegend
+        .append('g')
+        .style('transform', `translateX(${margin.left}px)`)
+        .append(() =>
+          legend({
+            color: colorScale,
+            title: 'Confirmed Cases',
+            width: barWidth,
+            height: 0.8 * heightLegend,
+            ticks: 6,
+            tickFormat: function (d, i, n) {
+              if (!Number.isInteger(d)) return;
+              if (i === n.length - 1) return d + '+';
+              return d;
+            },
+          })
+        );
+      svgLegend.attr('viewBox', `0 0 ${widthLegend} ${heightLegend}`);
 
-  const handleMouseover = (name) => {
-    states.map((state, index) => {
-      if (state.state.toLowerCase()===name.toLowerCase()) {
-        setState(state);
-        setIndex(index);
-      }
-    });
-  };
-
-  const mapData = (selector) => {
-    const svg = d3.select(selector);
-    const width = +svg.attr('width');
-    const height = +svg.attr('height');
-
-    const unemployment = d3.map();
-
-    const projection = d3.geoMercator()
-        .center([78.9629, 19])
-        .scale(1000)
-        .translate([width/2, height/2]);
-
-    const path = d3.geoPath(projection);
-
-    /* const x = d3.scaleLinear()
-        .domain([1, 10])
-        .range(1, total);
-
-    const xViz = d3.scaleLinear()
-        .domain([1, 10])
-        .range([10*1.5, (total+10)*1.5]);
-
-    const color = d3.scaleThreshold()
-        .domain(d3.range(2, 10))
-        .range(d3.schemeReds[9]);
-
-    svg.append('g')
-        .attr('class', 'key')
-        .attr('transform', 'translate(0,40)');
-
-     g.selectAll('rect')
-        .data(color.range().map(function(d) {
-          d = color.invertExtent(d);
-          if (d[0] == null) d[0] = xViz.domain()[0];
-          if (d[1] == null) d[1] = xViz.domain()[1];
-          return d;
-        }))
-        .enter().append('rect')
-        .attr('height', 8)
-        .attr('x', function(d) {
-          return (xViz(d[0]));
+      /* DRAW MAP */
+      let onceTouchedRegion = null;
+      const g = svg.append('g').attr('class', mapMeta.graphObjectName);
+      g.append('g')
+        .attr('class', 'states')
+        .selectAll('path')
+        .data(topology.features)
+        .join('path')
+        .attr('class', 'path-region')
+        .attr('fill', function (d) {
+          const n = parseInt(mapData[d.properties[propertyField]]) || 0;
+          const color = n === 0 ? '#ffffff' : colorScale(n);
+          return color;
         })
-        .attr('width', function(d) {
-          return xViz(d[1]) - xViz(d[0]);
+        .attr('d', path)
+        .attr('pointer-events', 'all')
+        .on('mouseover', (d) => {
+          handleMouseover(d.properties[propertyField]);
         })
-        .attr('fill', function(d) {
-          return color(d[0]);
+        .on('mouseleave', (d) => {
+          if (onceTouchedRegion === d) onceTouchedRegion = null;
+        })
+        .on('touchstart', (d) => {
+          if (onceTouchedRegion === d) onceTouchedRegion = null;
+          else onceTouchedRegion = d;
+        })
+        .on('click', handleClick)
+        .style('cursor', 'pointer')
+        .append('title')
+        .text(function (d) {
+          const value = mapData[d.properties[propertyField]] || 0;
+          return (
+            Number(
+              parseFloat(100 * (value / (statistic.total || 0.001))).toFixed(2)
+            ).toString() +
+            '% from ' +
+            toTitleCase(d.properties[propertyField])
+          );
         });
 
-    g.append('text')
-        .attr('class', 'caption')
-        .attr('x', xViz.range()[0]+10)
-        .attr('y', -6)
-        .attr('fill', '#000')
-        .attr('text-anchor', 'start')
-        .attr('font-weight', 'bold')
-        .text('Distribution by State');
+      g.append('path')
+        .attr('class', 'borders')
+        .attr('stroke', '#ff073a20')
+        .attr('fill', 'none')
+        .attr('stroke-width', 2)
+        .attr(
+          'd',
+          path(topojson.mesh(geoData, geoData.objects[mapMeta.graphObjectName]))
+        );
 
-    g.call(d3.axisBottom(xViz)
-        .tickSize(13)
-        .tickFormat(function(x, i) {
-          return i ? x*10 : x*10 + '%';
-        })
-        .tickValues(color.domain()))
-        .select('.domain')
-        .remove();*/
+      const handleMouseover = (name) => {
+        try {
+          setSelectedRegion(name);
+          setHoveredRegion(name, mapMeta);
+        } catch (err) {
+          console.log('err', err);
+        }
+      };
 
-    const promises = [
-      d3.json('/india.json'),
-    ];
+      function handleClick(d) {
+        d3.event.stopPropagation();
+        if (onceTouchedRegion || mapMeta.mapType === MAP_TYPES.STATE) return;
+        changeMap(d.properties[propertyField]);
+      }
 
-    Promise.all(promises).then(ready);
-
-    function ready([india]) {
-      states.map((state, index) => {
-        unemployment.set(state.state.toLowerCase(), state.confirmed);
+      // Reset on tapping outside map
+      svg.on('click', () => {
+        setSelectedRegion(null);
+        if (mapMeta.mapType === MAP_TYPES.COUNTRY)
+          setHoveredRegion('Total', mapMeta);
       });
-
-      svg.append('g')
-          .attr('class', 'states')
-          .selectAll('path')
-          .data(topojson.feature(india, india.objects.india).features)
-          .enter().append('path')
-          .attr('fill', function(d) {
-            const n = unemployment.get(d.properties.ST_NM.toLowerCase());
-            return d3.interpolateReds(d.confirmed = (n>0)*0.05 + n/statistic.maxConfirmed*0.8);
-          })
-          .attr('d', path)
-          .attr('pointer-events', 'all')
-          .on('mouseover', (d) => {
-            handleMouseover(d.properties.ST_NM);
-            d3.select(d3.event.target).attr('fill', '#424242');
-          })
-          .on('mouseout', (d) => {
-            const n = unemployment.get(d.properties.ST_NM.toLowerCase());
-            d3.select(d3.event.target).attr('fill', d3.interpolateReds(d.confirmed = (n>0)*0.05 + n/statistic.maxConfirmed*0.8));
-          })
-          .style('cursor', 'pointer')
-          .append('title')
-          .text(function(d) {
-            return parseFloat(100*(unemployment.get(d.properties.ST_NM.toLowerCase())/statistic.total)).toFixed(2) + '% from ' + toTitleCase(d.properties.ST_NM);
-          });
-
-      svg.append('path')
-          .attr('stroke', '#ff073a20')
-          .attr('fill', 'none')
-          .attr('stroke-width', 2)
-          .attr('d', path(topojson.mesh(india, india.objects.india)));
-    };
-  };
+    },
+    [
+      mapData,
+      mapMeta,
+      statistic.total,
+      statistic.maxConfirmed,
+      changeMap,
+      setHoveredRegion,
+      setSelectedRegion,
+      isCountryLoaded,
+    ]
+  );
 
   const toTitleCase = (str) => {
     str = str.toLowerCase().split(' ');
@@ -167,51 +183,55 @@ function ChoroplethMap(props) {
     return str.join(' ');
   };
 
+  useEffect(() => {
+    (async () => {
+      const data = await d3.json(mapMeta.geoDataFile);
+      if (statistic && choroplethMap.current) {
+        ready(data);
+        setSvgRenderCount((prevCount) => prevCount + 1);
+      }
+    })();
+  }, [mapMeta.geoDataFile, statistic, ready]);
+
+  const highlightRegionInMap = (name) => {
+    const paths = d3.selectAll('.path-region');
+    paths.classed('map-hover', (d, i, nodes) => {
+      const propertyField =
+        'district' in d.properties
+          ? propertyFieldMap['state']
+          : propertyFieldMap['country'];
+      if (name === d.properties[propertyField]) {
+        nodes[i].parentNode.appendChild(nodes[i]);
+        return true;
+      }
+      return false;
+    });
+  };
+
+  useEffect(() => {
+    highlightRegionInMap(selectedRegion);
+  }, [svgRenderCount, selectedRegion]);
+
   return (
-    <div className="ChoroplethMap fadeInUp" style={{animationDelay: '1.2s'}}>
-      <h1 className="header">Map</h1>
-      <h6 className="header">Hover over a state for more details</h6>
-      <div className="svg-parent">
-        <svg id="chart" width="650" height="750" viewBox="0 0 650 750" preserveAspectRatio="xMidYMid meet" ref={choroplethMap}></svg>
+    <div>
+      <div className="svg-parent fadeInUp" style={{animationDelay: '2.5s'}}>
+        <svg
+          id="chart"
+          preserveAspectRatio="xMidYMid meet"
+          ref={choroplethMap}
+        ></svg>
       </div>
-
-      <div className="map-stats">
-        <h4>{state.state}</h4>
-
-        <div className="stats">
-          <h5>Confirmed</h5>
-          <div className="stats-bottom">
-            <h1>{state.confirmed}</h1>
-            <h6>{}</h6>
-          </div>
-        </div>
-
-        <div className="stats is-blue">
-          <h5>Active</h5>
-          <div className="stats-bottom">
-            <h1>{state.active}</h1>
-            <h6>{}</h6>
-          </div>
-        </div>
-
-        <div className="stats is-green">
-          <h5>Recovered</h5>
-          <div className="stats-bottom">
-            <h1>{state.recovered}</h1>
-            <h6>{}</h6>
-          </div>
-        </div>
-
-        <div className="stats is-gray">
-          <h5>Deceased</h5>
-          <div className="stats-bottom">
-            <h1>{state.deaths}</h1>
-            <h6>{}</h6>
-          </div>
-        </div>
-
+      <div
+        className="svg-parent legend fadeInUp"
+        style={{animationDelay: '2.5s'}}
+      >
+        <svg
+          id="legend"
+          height="65"
+          preserveAspectRatio="xMidYMid meet"
+          ref={choroplethLegend}
+        ></svg>
       </div>
-
     </div>
   );
 }

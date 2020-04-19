@@ -1,50 +1,77 @@
-import React, {useState, useEffect} from 'react';
+import React, {useState} from 'react';
 import {Link} from 'react-router-dom';
 
-function Navbar(props) {
-  const [view, setView] = useState('Home');
+const navLinkProps = (path, animationDelay) => ({
+  className: `fadeInUp ${window.location.pathname === path ? 'focused' : ''}`,
+  style: {
+    animationDelay: `${animationDelay}s`,
+  },
+});
 
-  if (window.location.pathname!=='/summary') {
-    return (
-      <div className="Navbar" style={{animationDelay: '0.5s'}}>
+function Navbar({pages}) {
+  const [expand, setExpand] = useState(false);
 
-        <img className="fadeInUp" src="/icon.png" style={{animationDelay: '0.0s'}}/>
-
-        <div className="navbar-left">
-          <Link to="/" onClick={()=>{
-            setView('Home');
-          }}>
-            <span className={`fadeInUp ${view==='Home' ? 'focused' : ''}`} style={{animationDelay: '0.2s'}}>Home</span>
-          </Link>
-
-          {/* <Link to="/updates" onClick={()=>{
-            setView('Updates');
-          }}>
-            <span className={`fadeInUp ${view==='Updates' ? 'focused' : ''}`} style={{animationDelay: '0.2s'}}>Updates</span>
-          </Link>*/}
-
-          <Link to="/networkmap" onClick={()=>{
-            setView('Network Map');
-          }}>
-            <span className={`fadeInUp ${view==='Network Map' ? 'focused' : ''}`} style={{animationDelay: '0.3s'}}>Network Map</span>
-          </Link>
-
-          <Link to="/links" onClick={()=>{
-            setView('Helpful Links');
-          }}>
-            <span className={`fadeInUp ${view==='Helpful Links' ? 'focused' : ''}`} style={{animationDelay: '0.4s'}}>Helpful Links</span>
-          </Link>
-        </div>
-
-        <div className="navbar-right"></div>
-
+  return (
+    <div
+      className="Navbar"
+      style={{width: window.innerWidth > 769 && expand ? '6rem' : ''}}
+    >
+      <div className="navbar-left">English</div>
+      <div className="navbar-middle">
+        <Link to="/">
+          Covid19<span>India</span>
+        </Link>
       </div>
-    );
-  } else {
-    return (
-      <div></div>
-    );
-  }
+      <div
+        className="navbar-right"
+        style={{
+          background: expand ? '#4c75f2' : '',
+          color: expand ? 'white' : '',
+        }}
+        onClick={() => {
+          setExpand(!expand);
+        }}
+      >
+        {expand ? 'Close' : 'Menu'}
+      </div>
+      {expand && (
+        <div
+          className="expand"
+          style={{left: window.innerWidth > 769 && expand ? '6rem' : ''}}
+        >
+          {pages.map((page, i) => {
+            if (page.showInNavbar === true) {
+              return (
+                <Link
+                  to={page.pageLink}
+                  key={i}
+                  onClick={() => {
+                    setExpand(false);
+                  }}
+                >
+                  <span
+                    {...navLinkProps(
+                      page.pageLink,
+                      page.animationDelayForNavbar
+                    )}
+                  >
+                    {page.displayName}
+                  </span>
+                </Link>
+              );
+            }
+            return null;
+          })}
+          <div
+            className="expand-bottom fadeInUp"
+            style={{animationDelay: '1s'}}
+          >
+            <h5>A crowdsourced initiative.</h5>
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 export default Navbar;
